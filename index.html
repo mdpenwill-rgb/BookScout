@@ -1,90 +1,305 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Book Scout</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    html { -webkit-tap-highlight-color: transparent; }
+    body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    #reader video { border-radius: 1rem; object-fit: cover; width: 100% !important; }
+    .preview-box { aspect-ratio: 1/1; background: #18181b; border: 1px solid #27272a; border-radius: 1rem; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; }
+    .preview-box .ph-label { position: relative; z-index: 1; pointer-events: none; }
+    .preview-box img.preview-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 2; }
+  </style>
 </head>
-<body class="bg-zinc-950 text-zinc-100 p-4 font-sans">
-  <div class="max-w-md mx-auto space-y-6">
-    <header><h1 class="text-2xl font-bold">Book Scout</h1><p class="text-zinc-500 text-sm text-emerald-400">Hardware Native Mode</p></header>
+<body class="bg-zinc-950 text-zinc-100 p-4 font-sans antialiased">
+  <div class="max-w-md mx-auto space-y-6 pb-10">
+    <header>
+      <h1 class="text-2xl font-bold">Book Scout</h1>
+      <p class="text-sm text-emerald-400">Hardware native mode</p>
+      <p class="text-xs text-zinc-500 mt-1">GitHub Pages + Apps Script API, or open from the web app for <code class="text-zinc-400">google.script.run</code>.</p>
+    </header>
 
-    <input id="scoutId" type="text" placeholder="Scout ID" class="w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl">
-    <button id="btnSession" class="w-full bg-white text-black font-bold p-4 rounded-2xl">Start Session (GPS)</button>
-    <div id="reader" class="bg-black rounded-2xl border border-zinc-800 overflow-hidden"></div>
-    
+    <input id="scoutId" type="text" placeholder="Scout ID" autocomplete="username"
+      class="w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl outline-none focus:border-zinc-600 focus:ring-2 focus:ring-zinc-600/30">
+
+    <button id="btnSession" type="button" class="w-full bg-white text-black font-bold p-4 rounded-2xl active:scale-[0.99] transition-transform disabled:opacity-50">
+      Start session (GPS)
+    </button>
+    <p id="gpsStatus" class="text-xs text-center text-zinc-500">GPS must be locked before upload.</p>
+
+    <div id="reader" class="bg-black rounded-2xl border border-zinc-800 overflow-hidden min-h-[200px]"></div>
+    <p class="text-xs text-center text-zinc-500">Use the rear camera; good light helps ISBN barcodes.</p>
+
     <div class="grid grid-cols-3 gap-3">
-      <div onclick="document.getElementById('inCover').click()" class="aspect-square bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center overflow-hidden" id="preCover"><span>Cover</span><input type="file" id="inCover" accept="image/*" capture="environment" class="hidden"></div>
-      <div onclick="document.getElementById('inSpine').click()" class="aspect-square bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center overflow-hidden" id="preSpine"><span>Spine</span><input type="file" id="inSpine" accept="image/*" capture="environment" class="hidden"></div>
-      <div onclick="document.getElementById('inCond').click()" class="aspect-square bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center overflow-hidden" id="preCond"><span>Cond.</span><input type="file" id="inCond" accept="image/*" capture="environment" class="hidden"></div>
+      <div onclick="document.getElementById('inCover').click()" class="preview-box cursor-pointer" id="preCover" role="button" tabindex="0">
+        <span class="ph-label text-xs text-zinc-500">Cover</span>
+        <input type="file" id="inCover" accept="image/*" capture="environment" class="hidden">
+      </div>
+      <div onclick="document.getElementById('inSpine').click()" class="preview-box cursor-pointer" id="preSpine" role="button" tabindex="0">
+        <span class="ph-label text-xs text-zinc-500">Spine</span>
+        <input type="file" id="inSpine" accept="image/*" capture="environment" class="hidden">
+      </div>
+      <div onclick="document.getElementById('inCond').click()" class="preview-box cursor-pointer" id="preCond" role="button" tabindex="0">
+        <span class="ph-label text-xs text-zinc-500">Cond.</span>
+        <input type="file" id="inCond" accept="image/*" capture="environment" class="hidden">
+      </div>
     </div>
 
-    <button id="btnUpload" disabled class="w-full bg-emerald-600 p-5 rounded-2xl font-bold opacity-40">Upload Scan</button>
+    <button id="btnUpload" type="button" disabled
+      class="w-full bg-emerald-600 p-5 rounded-2xl font-bold text-white opacity-40 disabled:pointer-events-none">Upload scan</button>
   </div>
 
+  <div id="toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 max-w-[min(92vw,20rem)] bg-zinc-800 px-4 py-3 rounded-2xl text-sm text-center hidden shadow-2xl border border-zinc-700 z-50"></div>
+
   <script>
-    // PASTE YOUR GOOGLE WEB APP URL HERE
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbyQU3C41pOX63FJU3KR-Oo3DR950JcfxbQJkSEKybMO0fGjnzZ1f0D3nElxo2RmADoZTg/exec";
+(function () {
+  /** Paste your deployed web app URL (ends in /exec). Leave empty when this file is served by Apps Script to use google.script.run. */
+  var GAS_URL = '';
 
-    let session = null, html5QrCode = null, currentIsbn = "";
-    const btnUpload = document.getElementById('btnUpload');
+  var SESSION_KEY = 'bookscout_gps_v1';
+  var SCOUT_KEY = 'bookscout_scout_id';
+  var MAX_RAW_PHOTOS_BYTES = 20 * 1024 * 1024;
 
-    // Scanner
-    async function startScanner() {
-      html5QrCode = new Html5Qrcode("reader");
-      await html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 150 } }, (text) => {
-        currentIsbn = text; alert("Scanned: " + text);
-      });
-    }
+  var session = null;
+  var html5QrCode = null;
+  var currentIsbn = '';
+  var lastScanAt = 0;
+  var lastScanText = '';
+  var photoBytes = { cover: 0, spine: 0, cond: 0 };
 
-    // Photo Preview Logic
-    ['inCover', 'inSpine', 'inCond'].forEach(id => {
-      document.getElementById(id).onchange = e => {
-        const reader = new FileReader();
-        reader.onload = ev => {
-          document.getElementById('pre' + id.slice(2)).innerHTML = `<img src="${ev.target.result}" class="w-full h-full object-cover">`;
-          checkReady();
-        };
-        reader.readAsDataURL(e.target.files[0]);
-      };
-    });
+  var btnUpload = document.getElementById('btnUpload');
+  var elToast = document.getElementById('toast');
+  var toastTimer;
 
-    // GPS
-    document.getElementById('btnSession').onclick = () => {
-      navigator.geolocation.getCurrentPosition(pos => {
-        session = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        document.getElementById('btnSession').innerText = "GPS Locked";
-        checkReady();
-      });
-    };
+  function showToast(msg, isErr) {
+    elToast.textContent = msg;
+    elToast.classList.toggle('border-red-500/50', !!isErr);
+    elToast.classList.toggle('border-emerald-500/30', !isErr);
+    elToast.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { elToast.classList.add('hidden'); }, 4000);
+  }
 
-    function checkReady() {
-      const hasPhotos = document.querySelectorAll('img').length === 3;
-      if (session && currentIsbn && hasPhotos) {
-        btnUpload.disabled = false; btnUpload.classList.remove('opacity-40');
-      }
-    }
+  function hasThreePhotos() {
+    return document.querySelectorAll('#preCover img, #preSpine img, #preCond img').length === 3;
+  }
 
-    // Upload
-    btnUpload.onclick = async () => {
-      btnUpload.innerText = "Uploading..."; btnUpload.disabled = true;
-      const payload = {
-        scoutUuid: document.getElementById('scoutId').value,
-        isbn: currentIsbn, lat: session.lat, lng: session.lng,
-        photos: {
-          cover: document.querySelector('#preCover img').src,
-          spine: document.querySelector('#preSpine img').src,
-          condition: document.querySelector('#preCond img').src
+  function checkReady() {
+    var scoutOk = document.getElementById('scoutId').value.trim().length > 0;
+    var ok = !!(session && currentIsbn && hasThreePhotos() && scoutOk);
+    btnUpload.disabled = !ok;
+    btnUpload.classList.toggle('opacity-40', !ok);
+    btnUpload.classList.toggle('opacity-100', ok);
+  }
+
+  function loadScout() {
+    var v = localStorage.getItem(SCOUT_KEY);
+    if (v) document.getElementById('scoutId').value = v;
+  }
+  document.getElementById('scoutId').addEventListener('input', function () {
+    localStorage.setItem(SCOUT_KEY, document.getElementById('scoutId').value.trim());
+    checkReady();
+  });
+
+  function tryLoadSession() {
+    try {
+      var raw = sessionStorage.getItem(SESSION_KEY);
+      if (raw) {
+        var o = JSON.parse(raw);
+        if (o && typeof o.lat === 'number' && typeof o.lng === 'number') {
+          session = o;
+          document.getElementById('btnSession').textContent = 'GPS locked — tap to refresh';
+          document.getElementById('gpsStatus').textContent = 'GPS locked for this run.';
         }
-      };
+      }
+    } catch (e) {}
+  }
 
-      await fetch(GAS_URL, { method: "POST", body: JSON.stringify(payload) });
-      alert("Success!"); location.reload();
+  document.getElementById('btnSession').onclick = function () {
+    if (!navigator.geolocation) {
+      showToast('Geolocation not available.', true);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        session = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e) {}
+        document.getElementById('btnSession').textContent = 'GPS locked — tap to refresh';
+        document.getElementById('gpsStatus').textContent = 'GPS locked for this run.';
+        showToast('Session started.');
+        checkReady();
+      },
+      function () {
+        showToast('Could not read GPS.', true);
+        checkReady();
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  };
+
+  function setupPhoto(inputId, previewId, key) {
+    document.getElementById(inputId).onchange = function (e) {
+      var file = e.target.files && e.target.files[0];
+      photoBytes[key] = file ? (file.size || 0) : 0;
+      if (!file) {
+        checkReady();
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function (ev) {
+        var box = document.getElementById(previewId);
+        var old = box.querySelector('img.preview-img');
+        if (old) old.remove();
+        var img = document.createElement('img');
+        img.className = 'preview-img';
+        img.alt = '';
+        img.src = ev.target.result;
+        box.appendChild(img);
+        var lab = box.querySelector('.ph-label');
+        if (lab) lab.classList.add('hidden');
+        checkReady();
+      };
+      reader.readAsDataURL(file);
+    };
+  }
+  setupPhoto('inCover', 'preCover', 'cover');
+  setupPhoto('inSpine', 'preSpine', 'spine');
+  setupPhoto('inCond', 'preCond', 'cond');
+
+  async function startScanner() {
+    var readerEl = document.getElementById('reader');
+    readerEl.innerHTML = '<button type="button" id="initCam" class="w-full min-h-[200px] bg-zinc-900 rounded-2xl font-semibold text-zinc-300 border border-zinc-800 px-4">Tap to start camera</button>';
+
+    document.getElementById('initCam').onclick = async function () {
+      try {
+        html5QrCode = new Html5Qrcode('reader');
+        await html5QrCode.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 250, height: 150 } },
+          function (text) {
+            var t = (text || '').trim();
+            var now = Date.now();
+            if (t === lastScanText && now - lastScanAt < 2000) return;
+            lastScanText = t;
+            lastScanAt = now;
+            currentIsbn = t;
+            showToast('Barcode captured — add three photos if needed, then upload.');
+            checkReady();
+          }
+        );
+      } catch (err) {
+        console.error(err);
+        showToast('Camera could not start. Try Chrome, or open the deployed web app URL.', true);
+      }
+    };
+  }
+
+  function useGasFetch() {
+    return typeof GAS_URL === 'string' && GAS_URL.indexOf('http') === 0;
+  }
+
+  function runProcessScan(payload) {
+    if (useGasFetch()) {
+      return fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+      }).then(function (res) { return res.text(); }).then(function (text) {
+        try { return JSON.parse(text); } catch (e) { throw new Error(text || 'Bad response'); }
+      });
+    }
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      return new Promise(function (resolve, reject) {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(function (err) { reject(err && err.message ? err : new Error(String(err))); })
+          .processScan(payload);
+      });
+    }
+    return Promise.reject(new Error('Set GAS_URL for GitHub Pages, or open this page from the Apps Script web app.'));
+  }
+
+  btnUpload.onclick = async function () {
+    var scout = document.getElementById('scoutId').value.trim();
+    if (!scout || !currentIsbn || !session) {
+      showToast('Need Scout ID, GPS session, and a barcode.', true);
+      return;
+    }
+    if (!hasThreePhotos()) {
+      showToast('Add all three photos.', true);
+      return;
+    }
+
+    var rawTotal = (photoBytes.cover || 0) + (photoBytes.spine || 0) + (photoBytes.cond || 0);
+    if (rawTotal > MAX_RAW_PHOTOS_BYTES) {
+      var mb = (rawTotal / (1024 * 1024)).toFixed(1);
+      if (!window.confirm('These three photos add up to about ' + mb + ' MB (over 20 MB). Continue?')) return;
+    }
+
+    var preCover = document.querySelector('#preCover img');
+    var preSpine = document.querySelector('#preSpine img');
+    var preCond = document.querySelector('#preCond img');
+    if (!preCover || !preSpine || !preCond) {
+      showToast('Missing photo data.', true);
+      return;
+    }
+
+    var payload = {
+      scoutUuid: scout,
+      isbn: currentIsbn,
+      lat: session.lat,
+      lng: session.lng,
+      photos: {
+        cover: preCover.src,
+        spine: preSpine.src,
+        condition: preCond.src
+      }
     };
 
-    window.onload = startScanner;
+    btnUpload.disabled = true;
+    btnUpload.textContent = 'Uploading…';
+
+    try {
+      var result = await runProcessScan(payload);
+      if (result && result.ok) {
+        showToast('Success — ready for the next book.');
+        currentIsbn = '';
+        lastScanText = '';
+        lastScanAt = 0;
+        photoBytes = { cover: 0, spine: 0, cond: 0 };
+        ['preCover', 'preSpine', 'preCond'].forEach(function (pid) {
+          var box = document.getElementById(pid);
+          var img = box.querySelector('img.preview-img');
+          if (img) img.remove();
+          var lab = box.querySelector('.ph-label');
+          if (lab) lab.classList.remove('hidden');
+          var inp = box.querySelector('input[type="file"]');
+          if (inp) inp.value = '';
+        });
+        checkReady();
+      } else {
+        showToast((result && result.error) ? result.error : 'Upload failed', true);
+      }
+    } catch (err) {
+      showToast(err && err.message ? err.message : 'Upload failed', true);
+    } finally {
+      btnUpload.textContent = 'Upload scan';
+      checkReady();
+    }
+  };
+
+  loadScout();
+  tryLoadSession();
+  window.onload = function () {
+    startScanner();
+    checkReady();
+  };
+})();
   </script>
 </body>
 </html>
