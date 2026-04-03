@@ -1,1 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Book Scout</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 p-4 font-sans">
+  <div class="max-w-md mx-auto space-y-6">
+    <header><h1 class="text-2xl font-bold">Book Scout</h1><p class="text-zinc-500 text-sm text-emerald-400">Hardware Native Mode</p></header>
 
+    <input id="scoutId" type="text" placeholder="Scout ID" class="w-full bg-zinc-900 border border-zinc-800 p-4 rounded-2xl">
+    <button id="btnSession" class="w-full bg-white text-black font-bold p-4 rounded-2xl">Start Session (GPS)</button>
+    <div id="reader" class="bg-black rounded-2xl border border-zinc-800 overflow-hidden"></div>
+    
+    <div class="grid grid-cols-3 gap-3">
+      <div onclick="document.getElementById('inCover').click()" class="aspect-square bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center overflow-hidden" id="preCover"><span>Cover</span><input type="file" id="inCover" accept="image/*" capture="environment" class="hidden"></div>
+      <div onclick="document.getElementById('inSpine').click()" class="aspect-square bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center overflow-hidden" id="preSpine"><span>Spine</span><input type="file" id="inSpine" accept="image/*" capture="environment" class="hidden"></div>
+      <div onclick="document.getElementById('inCond').click()" class="aspect-square bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center overflow-hidden" id="preCond"><span>Cond.</span><input type="file" id="inCond" accept="image/*" capture="environment" class="hidden"></div>
+    </div>
+
+    <button id="btnUpload" disabled class="w-full bg-emerald-600 p-5 rounded-2xl font-bold opacity-40">Upload Scan</button>
+  </div>
+
+  <script>
+    // PASTE YOUR GOOGLE WEB APP URL HERE
+    const GAS_URL = "YOUR_NEW_DEPLOYMENT_URL_HERE";
+
+    let session = null, html5QrCode = null, currentIsbn = "";
+    const btnUpload = document.getElementById('btnUpload');
+
+    // Scanner
+    async function startScanner() {
+      html5QrCode = new Html5Qrcode("reader");
+      await html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 150 } }, (text) => {
+        currentIsbn = text; alert("Scanned: " + text);
+      });
+    }
+
+    // Photo Preview Logic
+    ['inCover', 'inSpine', 'inCond'].forEach(id => {
+      document.getElementById(id).onchange = e => {
+        const reader = new FileReader();
+        reader.onload = ev => {
+          document.getElementById('pre' + id.slice(2)).innerHTML = `<img src="${ev.target.result}" class="w-full h-full object-cover">`;
+          checkReady();
+        };
+        reader.readAsDataURL(e.target.files[0]);
+      };
+    });
+
+    // GPS
+    document.getElementById('btnSession').onclick = () => {
+      navigator.geolocation.getCurrentPosition(pos => {
+        session = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        document.getElementById('btnSession').innerText = "GPS Locked";
+        checkReady();
+      });
+    };
+
+    function checkReady() {
+      const hasPhotos = document.querySelectorAll('img').length === 3;
+      if (session && currentIsbn && hasPhotos) {
+        btnUpload.disabled = false; btnUpload.classList.remove('opacity-40');
+      }
+    }
+
+    // Upload
+    btnUpload.onclick = async () => {
+      btnUpload.innerText = "Uploading..."; btnUpload.disabled = true;
+      const payload = {
+        scoutUuid: document.getElementById('scoutId').value,
+        isbn: currentIsbn, lat: session.lat, lng: session.lng,
+        photos: {
+          cover: document.querySelector('#preCover img').src,
+          spine: document.querySelector('#preSpine img').src,
+          condition: document.querySelector('#preCond img').src
+        }
+      };
+
+      await fetch(GAS_URL, { method: "POST", body: JSON.stringify(payload) });
+      alert("Success!"); location.reload();
+    };
+
+    window.onload = startScanner;
+  </script>
+</body>
+</html>
